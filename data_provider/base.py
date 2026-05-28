@@ -564,6 +564,7 @@ class DataFetcherManager:
     """
 
     _DAILY_MARKET_FETCHER_SUPPORT = {
+        "ThsFetcher": {"cn"},
         "EfinanceFetcher": {"cn"},
         "AkshareFetcher": {"cn", "hk"},
         "TushareFetcher": {"cn", "hk"},
@@ -1054,6 +1055,7 @@ class DataFetcherManager:
         from .efinance_fetcher import EfinanceFetcher
         from .akshare_fetcher import AkshareFetcher
         from .tushare_fetcher import TushareFetcher
+        from .ths_fetcher import ThsFetcher
         from .pytdx_fetcher import PytdxFetcher
         from .baostock_fetcher import BaostockFetcher
         from .yfinance_fetcher import YfinanceFetcher
@@ -1066,6 +1068,13 @@ class DataFetcherManager:
         baostock = BaostockFetcher()
         yfinance = YfinanceFetcher()
         optional_fetchers: List[BaseFetcher] = []
+
+        # THS SDK 游客模式数据源（无需 token，自动检测可用性）
+        ths = ThsFetcher()
+        if ths.is_available():
+            optional_fetchers.append(ths)
+        else:
+            logger.debug('[数据源初始化] THS SDK 不可用，跳过 ThsFetcher')
 
         tushare_token = (getattr(config, "tushare_token", None) or "").strip()
         if tushare_token:
@@ -1392,7 +1401,7 @@ class DataFetcherManager:
         # 注意：新增全量接口（如 tushare_realtime）时需同步更新此列表
         # 全量接口特征：一次 API 调用拉取全市场 5000+ 股票数据
         priority = config.realtime_source_priority.lower()
-        bulk_sources = ['efinance', 'akshare_em', 'tushare']  # 全量接口列表
+        bulk_sources = ['ths', 'efinance', 'akshare_em', 'tushare']  # 全量接口列表
         
         # 如果优先级中前两个都不是全量数据源，跳过预取
         # 因为新浪/腾讯是单股票查询，不需要预取
@@ -1550,6 +1559,11 @@ class DataFetcherManager:
                     if fetcher is not None and hasattr(fetcher, 'get_realtime_quote'):
                         quote = self._call_fetcher_method(fetcher, 'get_realtime_quote', stock_code, source="tencent")
                 
+                elif source == "ths":
+                    fetcher = self._get_fetcher_by_name("ThsFetcher", capability="realtime_quote")
+                    if fetcher is not None and hasattr(fetcher, 'get_realtime_quote'):
+                        quote = self._call_fetcher_method(fetcher, 'get_realtime_quote', raw_stock_code or stock_code)
+
                 elif source == "tushare":
                     fetcher = self._get_fetcher_by_name("TushareFetcher", capability="realtime_quote")
                     if fetcher is not None and hasattr(fetcher, 'get_realtime_quote'):
