@@ -713,7 +713,11 @@ def _handle_get_wave_analysis(stock_code: str) -> dict:
         return {"error": "THS SDK not available"}
 
     try:
-        daily_df = fetcher._fetch_raw_data(stock_code, "2026-01-01", "2026-12-31")
+        from datetime import date
+        today = date.today()
+        end_date = today.strftime("%Y-%m-%d")
+        start_date = today.replace(year=today.year - 1).strftime("%Y-%m-%d")
+        daily_df = fetcher._fetch_raw_data(stock_code, start_date, end_date)
         daily_df = fetcher._normalize_data(daily_df, stock_code)
         hourly_df = None
         try:

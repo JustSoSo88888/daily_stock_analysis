@@ -98,6 +98,9 @@ def _find_peaks_troughs(
     points: List[WavePoint] = []
     last_peak_idx: int = -min_distance
     last_trough_idx: int = -min_distance
+    last_peak_price: Optional[float] = None
+    last_trough_price: Optional[float] = None
+    threshold = min_change_pct / 100.0
 
     for i in range(min_distance, n - min_distance):
         window_before = prices[i - min_distance : i]
@@ -108,12 +111,22 @@ def _find_peaks_troughs(
         is_min = all(current < wb for wb in window_before) and all(current <= wa for wa in window_after)
 
         if is_max and (i - last_peak_idx >= min_distance):
+            if last_peak_price is not None:
+                change = abs(current - last_peak_price) / last_peak_price
+                if change < threshold:
+                    continue
             points.append(WavePoint(date=str(dates[i])[:10], price=float(current), index=i, is_peak=True))
             last_peak_idx = i
+            last_peak_price = current
 
         elif is_min and (i - last_trough_idx >= min_distance):
+            if last_trough_price is not None:
+                change = abs(current - last_trough_price) / last_trough_price
+                if change < threshold:
+                    continue
             points.append(WavePoint(date=str(dates[i])[:10], price=float(current), index=i, is_peak=False))
             last_trough_idx = i
+            last_trough_price = current
 
     return points
 
@@ -137,56 +150,87 @@ def _build_waves(points: List[WavePoint]) -> List[WaveSegment]:
 
 
 def _classify_waves(waves: List[WaveSegment]) -> Tuple[str, str]:
-    """分类浪型。"""
+    """分类浪型，需通过交替验证。"""
     if not waves:
         return "neutral", "无法判断"
+
+    for i in range(len(waves) - 1):
+        if waves[i].direction == waves[i + 1].direction:
+            return "neutral", "浪型交替异常，无法分类"
+
     up = [w for w in waves if w.direction == "up"]
-    if len(up) >= 3 and len([w for w in waves if w.direction == "down"]) >= 2:
+    down = [w for w in waves if w.direction == "down"]
+
+    if len(up) >= 3 and len(down) >= 2 and waves[0].direction == "up":
         last_up = up[-1]
         prev_up = up[-2] if len(up) > 1 else None
         if last_up.amplitude > (prev_up.amplitude if prev_up else 0):
             return "up", "第3浪推进中（主升浪）"
         return "up", "第5浪推进中（末升段）"
+    if len(down) >= 3 and len(up) >= 2 and waves[0].direction == "down":
+        return "down", "下跌推动浪进行中"
     if up:
         return "up", "推动浪进行中"
     return "down", "调整或下跌中"
 
 
 def _verify_iron_rules(waves: List[WaveSegment], points: List[WavePoint]) -> List[IronRuleResult]:
-    """验证波浪理论三大铁律。"""
+    """验证波浪理论三大铁律。根据起点方向自适应标签。"""
     results = []
     ordered = sorted(points, key=lambda p: p.index)
+    if not ordered or not waves:
+        results.extend([
+            IronRuleResult(1, "铁律1: 第2浪不能跌破第1浪起点", False, "无数据"),
+            IronRuleResult(2, "铁律2: 第3浪不能是最短推动浪", False, "无数据"),
+            IronRuleResult(3, "铁律3: 第4浪不与第1浪高点重叠", False, "无数据"),
+        ])
+        return results
+
     up_waves = [w for w in waves if w.direction == "up"]
     down_waves = [w for w in waves if w.direction == "down"]
 
-    # Rule 1: W2 not below W1 start
-    if len(up_waves) >= 2 and len(down_waves) >= 1:
-        w1 = up_waves[0]
-        w2 = down_waves[0]
-        ok = w2.end.price > w1.start.price
-        results.append(IronRuleResult(1, "铁律1: 第2浪不能跌破第1浪起点", ok,
-            f"1浪起点{w1.start.price:.2f}, 2浪终点{w2.end.price:.2f} {'> ✅' if ok else '<= ❌'}"))
+    # Detect: if first point is a peak, we are in a downtrend context
+    # impulse (1-3-5) and corrective (2-4) indices invert
+    starts_with_peak = ordered[0].is_peak
+    if starts_with_peak:
+        imp = down_waves
+        corr = up_waves
+        trend_label = "下跌推动"
     else:
-        results.append(IronRuleResult(1, "铁律1: 第2浪不能跌破第1浪起点", True, "浪段不足"))
+        imp = up_waves
+        corr = down_waves
+        trend_label = "上涨推动"
 
-    # Rule 2: W3 not shortest
-    if len(up_waves) >= 3:
-        amps = [up_waves[0].amplitude, up_waves[1].amplitude, up_waves[2].amplitude]
+    enough = len(imp) >= 3 and len(corr) >= 2
+
+    # Rule 1: Wave 2 not below Wave 1 start
+    if len(imp) >= 2 and len(corr) >= 1:
+        w1 = imp[0]
+        w2 = corr[0]
+        ok = w2.end.price > w1.start.price if not starts_with_peak else w2.end.price < w1.start.price
+        results.append(IronRuleResult(1, "铁律1: 第2浪不能跌破第1浪起点", ok,
+            f"1浪起点{w1.start.price:.2f}, 2浪终点{w2.end.price:.2f} {'> ✅' if ok else '<= ❌'} [{trend_label}]"))
+    else:
+        results.append(IronRuleResult(1, "铁律1: 第2浪不能跌破第1浪起点", False, "浪段不足，无法验证"))
+
+    # Rule 2: Wave 3 not shortest
+    if len(imp) >= 3:
+        amps = [imp[0].amplitude, imp[1].amplitude, imp[2].amplitude]
         w3_shortest = amps[1] == min(amps) and amps.count(min(amps)) == 1
         results.append(IronRuleResult(2, "铁律2: 第3浪不能是最短推动浪", not w3_shortest,
             f"1浪={amps[0]:.2f} 3浪={amps[1]:.2f} 5浪={amps[2]:.2f} {'✅' if not w3_shortest else '❌ 3浪最短，五浪被证伪'}"))
     else:
-        results.append(IronRuleResult(2, "铁律2: 第3浪不能是最短推动浪", True, "浪段不足"))
+        results.append(IronRuleResult(2, "铁律2: 第3浪不能是最短推动浪", False, "浪段不足，无法验证"))
 
-    # Rule 3: W4 not overlap W1 top
-    if len(up_waves) >= 3 and len(down_waves) >= 2:
-        w1 = up_waves[0]
-        w4 = down_waves[1]
-        ok = w4.end.price > w1.end.price
+    # Rule 3: Wave 4 not overlap Wave 1 top
+    if len(imp) >= 3 and len(corr) >= 2:
+        w1 = imp[0]
+        w4 = corr[1]
+        ok = w4.end.price > w1.end.price if not starts_with_peak else w4.end.price < w1.end.price
         results.append(IronRuleResult(3, "铁律3: 第4浪不与第1浪高点重叠", ok,
-            f"1浪高点{w1.end.price:.2f}, 4浪低点{w4.end.price:.2f} {'> ✅' if ok else '<= ❌ 重叠，五浪被证伪'}"))
+            f"1浪高点{w1.end.price:.2f}, 4浪低点{w4.end.price:.2f} {'> ✅' if ok else '<= ❌ 重叠，五浪被证伪'} [{trend_label}]"))
     else:
-        results.append(IronRuleResult(3, "铁律3: 第4浪不与第1浪高点重叠", True, "浪段不足"))
+        results.append(IronRuleResult(3, "铁律3: 第4浪不与第1浪高点重叠", False, "浪段不足，无法验证"))
 
     return results
 
