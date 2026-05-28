@@ -99,6 +99,7 @@ class RealtimeSource(Enum):
     AKSHARE_QQ = "akshare_qq"       # 腾讯财经
     TUSHARE = "tushare"             # Tushare Pro
     TENCENT = "tencent"             # 腾讯直连
+    THS = "ths"                     # 同花顺 THS SDK
     SINA = "sina"                   # 新浪直连
     STOOQ = "stooq"                 # Stooq 美股兜底
     LONGBRIDGE = "longbridge"       # 长桥（美股/港股兜底）
@@ -147,6 +148,12 @@ class UnifiedRealtimeQuote:
     change_60d: Optional[float] = None      # 60日涨跌幅(%)
     high_52w: Optional[float] = None        # 52周最高
     low_52w: Optional[float] = None         # 52周最低
+
+    # === A股特色指标（THS/Tushare 等可提供）===
+    limit_up: Optional[float] = None        # 涨停价
+    limit_down: Optional[float] = None      # 跌停价
+    main_net_inflow: Optional[float] = None # 主力净流入(元)
+    main_net_amount: Optional[float] = None # 主力净量(%)
     
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典（过滤 None 值）"""
@@ -161,7 +168,8 @@ class UnifiedRealtimeQuote:
             'volume_ratio', 'turnover_rate', 'amplitude',
             'open_price', 'high', 'low', 'pre_close',
             'pe_ratio', 'pb_ratio', 'total_mv', 'circ_mv',
-            'change_60d', 'high_52w', 'low_52w'
+            'change_60d', 'high_52w', 'low_52w',
+            'limit_up', 'limit_down', 'main_net_inflow', 'main_net_amount',
         ]
         for f in optional_fields:
             val = getattr(self, f, None)
