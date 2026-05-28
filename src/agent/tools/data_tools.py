@@ -691,4 +691,57 @@ get_capital_flow_tool = ToolDefinition(
 )
 
 
+# ============================================================
+# get_wave_analysis
+# ============================================================
+
+def _handle_get_wave_analysis(stock_code: str) -> dict:
+    """Run Elliott Wave analysis with multi-timeframe K-line data."""
+    try:
+        from data_provider.ths_fetcher import ThsFetcher, _to_ths_code
+        from data_provider.wave_counter import analyze_multi_timeframe
+    except ImportError as e:
+        return {"error": f"Wave analysis deps unavailable: {e}"}
+
+    ths_code = _to_ths_code(stock_code)
+    if not ths_code:
+        return {"error": f"Unsupported stock code: {stock_code}"}
+
+    fetcher = ThsFetcher()
+    if not fetcher.is_available():
+        fetcher.close()
+        return {"error": "THS SDK not available"}
+
+    try:
+        daily_df = fetcher._fetch_raw_data(stock_code, "2026-01-01", "2026-12-31")
+        daily_df = fetcher._normalize_data(daily_df, stock_code)
+        hourly_df = None
+        try:
+            hourly_df = fetcher._ths_call("klines", ths_code, interval="60m", count=240)
+        except Exception:
+            logger.debug("60m K-line fetch failed for %s, daily only", stock_code)
+        result = analyze_multi_timeframe(daily_df, hourly_df, stock_code)
+        fetcher.close()
+        return result
+    except Exception as e:
+        fetcher.close()
+        logger.warning("Wave analysis failed for %s: %s", stock_code, e)
+        return {"error": f"Wave analysis failed: {str(e)[:200]}"}
+
+
+get_wave_analysis_tool = ToolDefinition(
+    name="get_wave_analysis",
+    description="Run Elliott Wave Theory analysis with multi-timeframe K-line data. "
+                "Returns detected wave structure, iron rule verification results, "
+                "Fibonacci retracement/extension levels, and confidence assessment.",
+    parameters=[
+        ToolParameter(name="stock_code", type="string",
+                      description="Stock code, e.g., '300652'"),
+    ],
+    handler=_handle_get_wave_analysis,
+    category="data",
+)
+
+
+ALL_DATA_TOOLS.append(get_wave_analysis_tool)
 ALL_DATA_TOOLS.append(get_capital_flow_tool)
