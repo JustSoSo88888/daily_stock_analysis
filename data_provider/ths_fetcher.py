@@ -28,7 +28,7 @@ def _to_ths_code(stock_code: str) -> Optional[str]:
         return f"USHA{code}"
     if code.startswith(("0", "3")):
         return f"USZA{code}"
-    if code.startswith(("8", "4")):
+    if code.startswith(("8", "43")):
         return f"USTM{code}"
     return None
 
@@ -125,6 +125,7 @@ class ThsFetcher(BaseFetcher):
         if "close" in df.columns and "pct_chg" not in df.columns:
             df["prev_close"] = df["close"].shift(1)
             df["pct_chg"] = ((df["close"] - df["prev_close"]) / df["prev_close"] * 100).round(2)
+            df["pct_chg"] = df["pct_chg"].fillna(0.0)
             df.drop(columns=["prev_close"], inplace=True)
 
         df["code"] = stock_code
@@ -147,9 +148,17 @@ class ThsFetcher(BaseFetcher):
             if row is None:
                 return None
 
-            def _f(key, default=0.0):
+            def _f(key, default=None):
                 v = row.get(key)
-                return float(v) if v is not None else default
+                if v is None:
+                    return default
+                try:
+                    fv = float(v)
+                except (ValueError, TypeError):
+                    return default
+                if pd.isna(fv):
+                    return default
+                return fv
 
             return UnifiedRealtimeQuote(
                 code=stock_code,
@@ -192,8 +201,8 @@ class ThsFetcher(BaseFetcher):
             name = df.iloc[0].get("名称", None) if not df.empty else None
             if name:
                 return str(name)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("[ThsFetcher] get_stock_name 失败 %s: %s", stock_code, e)
         return None
 
     # ---- 大盘指数 ----
